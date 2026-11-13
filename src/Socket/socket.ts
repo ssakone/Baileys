@@ -38,6 +38,7 @@ import {
 	getCompanionPlatformId,
 	getErrorCodeFromStreamError,
 	getNextPreKeysNode,
+	getPairingCodePlatformDisplay,
 	makeEventBuffer,
 	makeNoiseHandler,
 	promiseTimeout,
@@ -770,59 +771,70 @@ export const makeSocket = (config: SocketConfig) => {
 
 		authState.creds.pairingCode = pairingCode
 
-		authState.creds.me = {
-			id: jidEncode(phoneNumber, 's.whatsapp.net'),
-			name: '~'
-		}
-		ev.emit('creds.update', authState.creds)
-		await sendNode({
-			tag: 'iq',
-			attrs: {
-				to: S_WHATSAPP_NET,
-				type: 'set',
-				id: generateMessageTag(),
-				xmlns: 'md'
-			},
-			content: [
-				{
-					tag: 'link_code_companion_reg',
-					attrs: {
-						jid: authState.creds.me.id,
-						stage: 'companion_hello',
+		const jid = jidEncode(phoneNumber, 's.whatsapp.net')
+		// companion_hello is an IQ: wait for the server's answer so a rejected request
+		// (e.g. 400 bad-request) surfaces as an error instead of returning a dead code
+		try {
+			const result = await query({
+				tag: 'iq',
+				attrs: {
+					to: S_WHATSAPP_NET,
+					type: 'set',
+					xmlns: 'md'
+				},
+				content: [
+					{
+						tag: 'link_code_companion_reg',
+						attrs: {
+							jid,
+							stage: 'companion_hello',
 
-						should_show_push_notification: 'true'
-					},
-					content: [
-						{
-							tag: 'link_code_pairing_wrapped_companion_ephemeral_pub',
-							attrs: {},
-							content: await generatePairingKey()
+							should_show_push_notification: 'true'
 						},
-						{
-							tag: 'companion_server_auth_key_pub',
-							attrs: {},
-							content: authState.creds.noiseKey.public
-						},
-						{
-							tag: 'companion_platform_id',
-							attrs: {},
-							content: getCompanionPlatformId(browser)
-						},
-						{
-							tag: 'companion_platform_display',
-							attrs: {},
-							content: `${browser[1]} (${browser[0]})`
-						},
-						{
-							tag: 'link_code_pairing_nonce',
-							attrs: {},
-							content: '0'
-						}
-					]
-				}
-			]
-		})
-		return authState.creds.pairingCode
+						content: [
+							{
+								tag: 'link_code_pairing_wrapped_companion_ephemeral_pub',
+								attrs: {},
+								content: await generatePairingKey()
+							},
+							{
+								tag: 'companion_server_auth_key_pub',
+								attrs: {},
+								content: authState.creds.noiseKey.public
+							},
+							{
+								tag: 'companion_platform_id',
+								attrs: {},
+								content: getCompanionPlatformId(browser)
+							},
+							{
+								tag: 'companion_platform_display',
+								attrs: {},
+								content: getPairingCodePlatformDisplay(browser)
+							},
+							{
+								tag: 'link_code_pairing_nonce',
+								attrs: {},
+								content: '0'
+							}
+						]
+					}
+				]
+			})
+			if (!result) {
+				throw new Boom('Timed out waiting for pairing code response', { statusCode: DisconnectReason.timedOut })
+			}
+		} catch (error) {
+			if (authState.creds.pairingCode === pairingCode) {
+				authState.creds.pairingCode = undefined
+			}
+
+			throw error
+		}
+
+		authState.creds.me = { id: jid, name: '~' }
+		ev.emit('creds.update', authState.creds)
+		return pairingCode
 	}
 
 	async function generatePairingKey() {

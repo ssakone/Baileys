@@ -34,6 +34,15 @@ export const getCompanionPlatformId = (browser: WABrowserDescription): string =>
 	return getCompanionWebClientType(browser).toString()
 }
 
+// the pairing-code IQ validates companion_platform_display as "Browser (OS)" with a
+// known OS and answers 400 bad-request otherwise, so a custom browser[0] label
+// (e.g. "Chrome (My App)") would yield a code the phone can never use
+const PAIRING_CODE_DISPLAY_OS = new Set(['Mac OS', 'Windows', 'Ubuntu'])
+
+export const getPairingCodePlatformDisplay = ([os, browserName]: WABrowserDescription): string => {
+	return `${browserName} (${PAIRING_CODE_DISPLAY_OS.has(os) ? os : 'Mac OS'})`
+}
+
 export const buildPairingQRData = (
 	ref: string,
 	noiseKeyB64: string,
